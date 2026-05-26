@@ -292,7 +292,9 @@ let client = AlternatorClient::from_conf(
 
 Alternator accepts compressed request bodies, which can significantly reduce the bandwidth for write-heavy workloads (especially `BatchWriteItem` and large `PutItem` payloads).
 
-Compression is **off by default**. To enable it, pass a `RequestCompression` configuration:
+> **Note**: currently the default is `CompressionAlgorithm::Gzip` with 1024 bytes threshold, but it will be changed to disabled.
+
+To enable request compression, pass a `RequestCompression` configuration:
 
 ```rust
 use alternator_driver::{AlternatorConfig, AlternatorClient, RequestCompression, CompressionAlgorithm, CompressionLevel};
@@ -309,6 +311,11 @@ let client = AlternatorClient::from_conf(
         .allow_no_auth()
         .build(),
 );
+```
+
+To disable compression, use
+```rust
+.request_compression(RequestCompression::disabled())
 ```
 
 The three parameters are the compression algorithm, the compression level, and the body-size threshold in bytes. Requests with bodies smaller than the threshold are sent uncompressed. Setting the threshold to zero compresses every request.
