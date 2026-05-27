@@ -42,13 +42,13 @@ Add the crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-alternator-driver = "0.1.0"
+alternator-driver = { git = "https://github.com/scylladb/alternator-client-rust" }
 aws-sdk-dynamodb = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.18", features = ["macros", "rt-multi-thread", "sync", "time"] }
 ```
 > **Note**: This crate is not yet published to crates.io. Depend on it via the GitHub URL.
 
-The crate is a drop-in alongside the AWS Rust SDK for DynamoDB. If you have code using `aws_sdk_dynamodb::Client`, the migration is essentially three name swaps:
+Because the Alternator Client is designed with an interface identical to the AWS SDK for DynamoDB, developers can seamlessly swap out aws_sdk_dynamodb::Client in their projects, like so:
 
 ```rust
 use alternator_driver::*;              // <-- new import
@@ -86,6 +86,8 @@ A single Alternator cluster typically consists of multiple nodes, any of which c
 
 ### Seed hosts vs endpoint URL
 
+> **Note**: options shown here are added in #31 and waiting to be merged.
+
 The simplest way to construct a client is with `endpoint_url`, the same field the AWS SDK uses:
 
 ```rust
@@ -118,7 +120,9 @@ The client tries each seed in turn until one responds successfully to `/localnod
 
 ### Node discovery
 
-The client maintains a list of live nodes that it refreshes in the background. The refresh has two cadences:
+> **Note:** The node discovery and load-balancing mechanics described here are currently waiting to be merged in PR #31.
+
+The client maintains a list of live nodes, which it refreshes in the background. The refresh has two cadences:
 
 - **Active** (default 1s): used while the client is being called regularly.
 - **Idle** (default 60s): used when no caller has touched the client recently.
@@ -133,6 +137,8 @@ Both intervals are configurable:
 The refresh task runs in the background for the lifetime of the client. It terminates automatically when the client is dropped.
 
 ### Routing scope
+
+> **Note:** The routing scope feature described below is currently waiting to be merged in PR #30.
 
 By default, the client uses every Alternator node returned by `/localnodes`. For deployments spanning multiple datacenters or racks, you usually want requests to stay within a specific datacenter — or within a specific rack of a specific datacenter — to minimize cross-zone latency and bandwidth.
 
@@ -158,7 +164,21 @@ let config = AlternatorConfig::builder()
     .build();
 ```
 
-> **Note**: the default scope, `RoutingScope::from_cluster()`, does not actually mean "every node in the cluster." It means "don't filter by the datacenter or the rack at all." Alternator interprets this as "return nodes from the same datacenter as me," so the effective scope ends up being the datacenter of whichever node served the `/localnodes` request — typically the seed.
+Note that the default scope, `RoutingScope::from_cluster()`, does not actually mean "every node in the cluster." It means "don't filter by the datacenter or the rack at all." Alternator interprets this as "return nodes from the same datacenter as me," so the effective scope ends up being the datacenter of whichever node served the `/localnodes` request — typically the seed.
+
+**Example**:
+Consider a cluster with two datacenters:
+- `dc1`: nodes A (seed), B, C
+- `dc2`: nodes X, Y, Z
+
+The client is configured with `endpoint_url("http://A:8043")` and `RoutingScope::from_cluster()`.
+
+- If `from_cluster()` meant *every node in the cluster*, the client would discover
+  and route to all six nodes (A, B, C, X, Y, Z).
+
+- What actually happens: `/localnodes` on A receives no filter, so Alternator
+  returns only nodes from A's own datacenter — A, B, C. The client routes to those
+  three. X, Y, and Z are never used.
 
 ### Scope fallbacks
 
@@ -166,28 +186,34 @@ A scope can be narrow enough that no nodes match it — for example, a specific 
 
 ```rust
 // Rack -> Datacenter -> Cluster fallback chain
-let scope = RoutingScope::from_rack("datacenter1".to_string(), "rack1".to_string())
-    .with_fallback(RoutingScope::from_datacenter("datacenter1".to_string()))
+let scope = RoutingScope::from_rack("dc1".to_string(), "rack1".to_string())
+    .with_fallback(RoutingScope::from_datacenter("dc1".to_string()))
     .with_fallback(RoutingScope::from_cluster());
 
 // Rack -> Another Rack -> Datacenter -> Cluster
-let scope = RoutingScope::from_rack("datacenter1".to_string(), "rack1".to_string())
-    .with_fallback(RoutingScope::from_rack("datacenter1".to_string(), "rack2".to_string()))
-    .with_fallback(RoutingScope::from_datacenter("datacenter1".to_string()))
+let scope = RoutingScope::from_rack("dc1".to_string(), "rack1".to_string())
+    .with_fallback(RoutingScope::from_rack("dc1".to_string(), "rack2".to_string()))
+    .with_fallback(RoutingScope::from_datacenter("dc1".to_string()))
     .with_fallback(RoutingScope::from_cluster());
 ```
+The first one says:
+- prefer `rack1` of `datacenter1`
+- if no nodes there, use any node in `datacenter1`
+- if still nothing, use any node Alternator returns
 
-The first one says: "prefer rack1 of datacenter1, if no nodes there, use any node in datacenter1, if still nothing, use any node Alternator returns." The client walks the chain from preferred to broadest, picking the first scope that has live nodes.
+The client walks the chain from preferred to broadest, picking the first scope that has live nodes.
 
-Each `.with_fallback(...)` call appends to the end of the chain, so the order in code matches the order of preference. Fallbacks ideally should be broader than or equal to the previous scope.
+Each `.with_fallback(...)` call appends to the end of the chain, so the order in code matches the order of preference.
 
 ### Load balancing strategies
 
-For every request, the client picks a node and rewrites the request URI to point at that node before signing. The default strategy is round-robin across the live nodes — each request goes to the next node in the rotation, and an SDK-level retry moves on to a different node.
+For every request, the client picks a node and rewrites the request URI to point at that node before signing. The default strategy is round-robin across the live nodes. Requests and retries share the same rotation, and retries skip nodes already tried for the current request.
 
 Round-robin is the right default for the vast majority of workloads. For workloads that perform many LWTs against the same partition keys, see [Key route affinity](#key-route-affinity) below.
 
 ## Key route affinity
+
+> **Note:** Key route affinity is currently waiting to be merged in PR #32.
 
 When using Lightweight Transactions (LWT) in ScyllaDB/Alternator, routing requests for the same partition key to the same coordinator node can significantly improve performance. This is because LWT operations require consensus among replicas, and using the same coordinator reduces coordination overhead. KeyRouteAffinity is a way to reduce this overhead by ensuring that two queries targeting the same partition key will be routed to the same coordinator. Instead of round-robin random selection of nodes, it provides a deterministic mapping from partition key to coordinator.
 
@@ -200,13 +226,6 @@ Alternator supports different write isolation modes configured via `alternator_w
 - **`forbid_rmw`**: LWTs are completely disabled. Conditional operations will fail.
 - **`unsafe_rmw`**: Unsafe - does not use LWT for RMW operations.
 
-### When to use KeyRouteAffinity
-
-Enable KeyRouteAffinity when:
-- Your Alternator cluster is configured with `alternator_write_isolation: only_rmw_uses_lwt` (use `KeyRouteAffinityType::Rmw`) or `always` (use `KeyRouteAffinityType::AnyWrite`)
-- You perform conditional updates/deletes on the same items repeatedly
-- You want to optimize LWT performance by ensuring the same coordinator handles requests for the same partition key
-
 ### Configuration options
 
 There are three KeyRouteAffinity modes:
@@ -214,6 +233,23 @@ There are three KeyRouteAffinity modes:
 1. **`KeyRouteAffinityType::None`** (default): Disabled. Requests are distributed randomly across nodes.
 2. **`KeyRouteAffinityType::Rmw`**: Enables route affinity for conditional write operations, operations that need read before write.
 3. **`KeyRouteAffinityType::AnyWrite`**: Enables route affinity for all write operations.
+
+
+### When to use KeyRouteAffinity
+
+Enable KeyRouteAffinity when:
+- You perform conditional updates/deletes on the same items repeatedly
+- You want to optimize LWT performance by ensuring the same coordinator handles requests for the same partition key
+
+Which `KeyRouteAffinity` mode to use depends on your cluster's write isolation setting:
+
+| `alternator_write_isolation` | Recommended `KeyRouteAffinityType` |
+| --- | --- |
+| `only_rmw_uses_lwt` | `Rmw` |
+| `always` | `AnyWrite` |
+| `forbid_rmw` | `None` |
+| `unsafe_rmw` | `None` |
+
 
 ### Automatic partition key discovery
 
@@ -320,7 +356,7 @@ To disable compression, use
 
 The three parameters are the compression algorithm, the compression level, and the body-size threshold in bytes. Requests with bodies smaller than the threshold are sent uncompressed. Setting the threshold to zero compresses every request.
 
-Two algorithms are supported: `CompressionAlgorithm::Gzip` (sends `Content-Encoding: gzip`) and `CompressionAlgorithm::Zlib` (sends `Content-Encoding: deflate`). Level is `flate2`'s `Compression` type re-exported as `CompressionLevel` — `CompressionLevel::default()` (level 6) is a reasonable balance of speed and ratio; `CompressionLevel::best()` (level 9) maximizes compression at the cost of CPU; `CompressionLevel::fast()` (level 1) is the opposite.
+Two algorithms are supported: `CompressionAlgorithm::Gzip` (sends `Content-Encoding: gzip`) and `CompressionAlgorithm::Zlib` (sends `Content-Encoding: deflate`). Level is `flate2::Compression` type re-exported as `alternator_driver::CompressionLevel` — `alternator_driver::CompressionLevel::default()` (level 6) is a reasonable balance of speed and ratio; `alternator_driver::CompressionLevel::best()` (level 9) maximizes compression at the cost of CPU; `alternator_driver::CompressionLevel::fast()` (level 1) is the opposite.
 
 ## Per-operation override
 
