@@ -317,7 +317,7 @@ This is on by default, you can disable it if needed:
 let client = AlternatorClient::from_conf(
     AlternatorConfig::builder()
         .endpoint_url("http://10.0.0.1:8043")
-        .enforce_header_whitelist(false)
+        .strip_headers(false)
         .behavior_version(BehaviorVersion::latest())
         .allow_no_auth()
         .build(),
@@ -326,12 +326,11 @@ let client = AlternatorClient::from_conf(
 
 ## Request compression
 
-Alternator accepts compressed request bodies, which can significantly reduce the bandwidth for write-heavy workloads (especially `BatchWriteItem` and large `PutItem` payloads).
+Alternator accepts compressed request bodies to reduce bandwidth for write-heavy workloads (such as BatchWriteItem and large PutItem payloads).
 
-> **Note**: currently the default is `CompressionAlgorithm::Gzip` with 1024 bytes threshold, but it will be changed to disabled.
+By default, AlternatorClient does not compress requests to ensure compatibility with older Alternator versions.
 
-To enable request compression, pass a `RequestCompression` configuration:
-
+You can enable compression in `AlternatorConfig`, like so:
 ```rust
 use alternator_driver::{AlternatorConfig, AlternatorClient, RequestCompression, CompressionAlgorithm, CompressionLevel};
 
@@ -348,41 +347,35 @@ let client = AlternatorClient::from_conf(
         .build(),
 );
 ```
+or by using `.customize().alternator_config_override()` to enable it for a specific driver call.
 
-To disable compression, use
-```rust
-.request_compression(RequestCompression::disabled())
-```
-
-The three parameters are the compression algorithm, the compression level, and the body-size threshold in bytes. Requests with bodies smaller than the threshold are sent uncompressed. Setting the threshold to zero compresses every request.
-
-Two algorithms are supported: `CompressionAlgorithm::Gzip` (sends `Content-Encoding: gzip`) and `CompressionAlgorithm::Zlib` (sends `Content-Encoding: deflate`). Level is `flate2::Compression` type re-exported as `alternator_driver::CompressionLevel` — `alternator_driver::CompressionLevel::default()` (level 6) is a reasonable balance of speed and ratio; `alternator_driver::CompressionLevel::best()` (level 9) maximizes compression at the cost of CPU; `alternator_driver::CompressionLevel::fast()` (level 1) is the opposite.
+Currently we support two algorithms: Gzip and Zlib.
+For both you need to specify the compression level (6 by default).
+The compression is applied for requests which exceed body size of specified threshold. If zero is specified, every request is compressed.
 
 ## Per-operation override
 
-Some Alternator-specific settings can be overridden on a per-request basis, using the same `.customize()` mechanism the AWS SDK provides for its own configuration. Call `.alternator_config_override()` on the customizable operation and pass an `AlternatorConfig::builder()` with the settings you want to change for that single request:
+In case an Alternator-specific setting is to be overriden for a specified driver call, you can use the same `.customize()` pattern that DynamoDB uses.
 
 ```rust
-#[tokio::main]
-async fn main() {
-    // ...
-    client
-        .put_item()
-        .table_name("ExampleTable")
-        .item("ExampleKey", AttributeValue::S("ExampleItemKey".into()))
-        .item("ExampleAttribute", AttributeValue::S("ExampleItem".into()))
-        .customize()
-        
-        .alternator_config_override(
-            AlternatorConfig::builder()
-                .request_compression(RequestCompression::disabled())
-        )
-        .send()
-        .await
-        .unwrap();
-}
+use alternator_driver::*; // Include AlternatorCustomizableOperation - trait responsible for customization
+// ...
+client
+    .put_item()
+    .table_name("ExampleTable")
+    .item("ExampleKey", AttributeValue::S("ExampleItemKey".into()))
+    .item("ExampleAttribute", AttributeValue::S("ExampleItem".into()))
+
+    .customize()
+    .alternator_config_override(    // <-- Instead of config_override
+        AlternatorConfig::builder() // <-- Instead of aws_sdk_dynamodb::Config
+            .request_compression(RequestCompression::disabled())
+    )
+    .send()
+    .await
+    .unwrap();
 ```
 
-`.alternator_config_override()` is the Alternator-specific equivalent of the AWS SDK's `.config_override()`. The two work alongside each other — use `.config_override()` for SDK-level settings (retry behavior, timeouts) and `.alternator_config_override()` for Alternator-specific settings.
+`alternator_config_override` is a direct extension of `config_override`, it also allows the developer to override of all DynamoDB settings.
 
 > **Note**: load-balancing and endpoint settings cannot be overridden per-operation. They take effect only when the client is constructed. Per-operation override is for settings that apply to individual request processing — compression and header stripping.
