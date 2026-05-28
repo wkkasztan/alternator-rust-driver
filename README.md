@@ -197,8 +197,8 @@ let scope = RoutingScope::from_rack("dc1".to_string(), "rack1".to_string())
     .with_fallback(RoutingScope::from_cluster());
 ```
 The first one says:
-- prefer `rack1` of `datacenter1`
-- if no nodes there, use any node in `datacenter1`
+- prefer `rack1` of `dc1`
+- if no nodes there, use any node in `dc1`
 - if still nothing, use any node Alternator returns
 
 The client walks the chain from preferred to broadest, picking the first scope that has live nodes.
