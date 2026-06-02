@@ -317,7 +317,7 @@ This is on by default, you can disable it if needed:
 let client = AlternatorClient::from_conf(
     AlternatorConfig::builder()
         .endpoint_url("http://10.0.0.1:8043")
-        .strip_headers(false)
+        .optimize_headers(false)
         .behavior_version(BehaviorVersion::latest())
         .allow_no_auth()
         .build(),
