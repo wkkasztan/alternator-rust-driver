@@ -80,13 +80,10 @@ async fn main() {
 ```
 
 ## Load balancing
-> **Note:** load balancing is not yet merged, the changes described here are implemented in PRs #30, #31, and #32.
 
 A single Alternator cluster typically consists of multiple nodes, any of which can serve any request. This crate distributes requests across the live nodes of the cluster rather than sending everything to one address. There's no separate load-balancer process, routing happens entirely client-side.
 
 ### Seed hosts vs endpoint URL
-
-> **Note**: options shown here are added in #31 and waiting to be merged.
 
 The simplest way to construct a client is with `endpoint_url`, the same field the AWS SDK uses:
 
@@ -120,8 +117,6 @@ The client tries each seed in turn until one responds successfully to `/localnod
 
 ### Node discovery
 
-> **Note:** The node discovery and load-balancing mechanics described here are currently waiting to be merged in PR #31.
-
 The client maintains a list of live nodes, which it refreshes in the background. The refresh has two cadences:
 
 - **Active** (default 1s): used while the client is being called regularly.
@@ -137,8 +132,6 @@ Both intervals are configurable:
 The refresh task runs in the background for the lifetime of the client. It terminates automatically when the client is dropped.
 
 ### Routing scope
-
-> **Note:** The routing scope feature described below is currently waiting to be merged in PR #30.
 
 By default, the client uses every Alternator node returned by `/localnodes`. For deployments spanning multiple datacenters or racks, you usually want requests to stay within a specific datacenter — or within a specific rack of a specific datacenter — to minimize cross-zone latency and bandwidth.
 
@@ -212,8 +205,6 @@ For every request, the client picks a node and rewrites the request URI to point
 Round-robin is the right default for the vast majority of workloads. For workloads that perform many LWTs against the same partition keys, see [Key route affinity](#key-route-affinity) below.
 
 ## Key route affinity
-
-> **Note:** Key route affinity is currently waiting to be merged in PR #32.
 
 When using Lightweight Transactions (LWT) in ScyllaDB/Alternator, routing requests for the same partition key to the same coordinator node can significantly improve performance. This is because LWT operations require consensus among replicas, and using the same coordinator reduces coordination overhead. KeyRouteAffinity is a way to reduce this overhead by ensuring that two queries targeting the same partition key will be routed to the same coordinator. Instead of round-robin random selection of nodes, it provides a deterministic mapping from partition key to coordinator.
 
