@@ -209,15 +209,6 @@ Round-robin is the right default for the vast majority of workloads. For workloa
 
 When using Lightweight Transactions (LWT) in ScyllaDB/Alternator, routing requests for the same partition key to the same coordinator node can significantly improve performance. This is because LWT operations require consensus among replicas, and using the same coordinator reduces coordination overhead. KeyRouteAffinity is a way to reduce this overhead by ensuring that two queries targeting the same partition key will be routed to the same coordinator. Instead of round-robin random selection of nodes, it provides a deterministic mapping from partition key to coordinator.
 
-### Alternator write isolation modes
-
-Alternator supports different write isolation modes configured via `alternator_write_isolation`:
-
-- **`always`**: All write operations use LWT (Paxos consensus). Maximum consistency but higher latency.
-- **`only_rmw_uses_lwt`**: Only Read-Modify-Write operations (UpdateItem with conditions, DeleteItem with conditions) use LWT. This is the **recommended setting** for most use cases.
-- **`forbid_rmw`**: LWTs are completely disabled. Conditional operations will fail.
-- **`unsafe_rmw`**: Unsafe - does not use LWT for RMW operations.
-
 ### Configuration options
 
 There are three KeyRouteAffinity modes:
@@ -233,14 +224,14 @@ Enable KeyRouteAffinity when:
 - You perform conditional updates/deletes on the same items repeatedly
 - You want to optimize LWT performance by ensuring the same coordinator handles requests for the same partition key
 
-Which `KeyRouteAffinity` mode to use depends on your cluster's write isolation setting:
+Which `KeyRouteAffinity` mode to use depends on your cluster's `alternator_write_isolation` setting. The table shows the maximum effective type for each mode. Narrower types are always valid too (e.g. `Rmw` or `None` on an `always` cluster if only conditional writes repeat or the writes are uniform):
 
-| `alternator_write_isolation` | Recommended `KeyRouteAffinityType` |
-| --- | --- |
-| `only_rmw_uses_lwt` | `Rmw` |
-| `always` | `AnyWrite` |
-| `forbid_rmw` | `None` |
-| `unsafe_rmw` | `None` |
+| `alternator_write_isolation` | Description | Maximum effective `KeyRouteAffinityType` |
+| --- | --- | --- |
+| `only_rmw_uses_lwt` | Only RMW operations (conditional updates/deletes) use LWT. | `Rmw` |
+| `always` | All writes use LWT. | `AnyWrite` |
+| `forbid_rmw` | LWTs are completely disabled. Conditional operations will fail. | `None` |
+| `unsafe_rmw` | Does not use LWT for RMW operations. | `None` |
 
 
 ### Automatic partition key discovery
