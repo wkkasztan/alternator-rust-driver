@@ -125,8 +125,9 @@ The client maintains a list of live nodes, which it refreshes in the background.
 Both intervals are configurable:
 
 ```rust
-.active_interval(500)   // milliseconds
-.idle_interval(30_000)
+
+.active_interval(std::time::Duration::from_millis(500))
+.idle_interval(std::time::Duration::from_secs(30))
 ```
 
 The refresh task runs in the background for the lifetime of the client. It terminates automatically when the client is dropped.
